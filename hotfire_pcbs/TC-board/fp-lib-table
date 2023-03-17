@@ -1,4 +1,5 @@
 (fp_lib_table
   (lib (name "MAX31856_Breakout")(type "KiCad")(uri "${KIPRJMOD}/../../hardware-sch-blocks/LE2/MAX31856_Breakout")(options "")(descr ""))
   (lib (name "star-common-lib")(type "KiCad")(uri "${KIPRJMOD}/../../hardware-sch-blocks/star-common-lib.pretty")(options "")(descr ""))
+  (lib (name "DSUB_622-015-260-042")(type "KiCad")(uri "${KIPRJMOD}/../../hardware-sch-blocks/LE2/DSUB_622-015-260-042")(options "")(descr ""))
 )
