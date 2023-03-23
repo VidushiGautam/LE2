@@ -1064,7 +1064,7 @@
     (property "Value" "PCIE-LP-01-01-F-DV-A-TR" (id 1) (at 88.9 116.586 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Footprint" "Connector_PCBEdge:BUS_PCIexpress_x1" (id 2) (at 100.584 116.84 0)
+    (property "Footprint" "PCIe_x1_card_edge:PCIe_x1_card_edge" (id 2) (at 100.584 116.84 0)
       (effects (font (size 1.27 1.27)) hide)
     )
     (property "Datasheet" "~" (id 3) (at 100.584 116.84 0)
@@ -1562,7 +1562,7 @@
       (reference "J1") (unit 1) (value "DB15_Female") (footprint "DSUB_622-015-260-042:DSUB_622-015-260-042")
     )
     (path "/19e0a432-371a-451a-988e-c01fc4d96ec9"
-      (reference "J3") (unit 1) (value "PCIE-LP-01-01-F-DV-A-TR") (footprint "Connector_PCBEdge:BUS_PCIexpress_x1")
+      (reference "J3") (unit 1) (value "PCIE-LP-01-01-F-DV-A-TR") (footprint "PCIe_x1_card_edge:PCIe_x1_card_edge")
     )
     (path "/247c8275-c689-4ade-a534-8ec2fd4f463e"
       (reference "TP1") (unit 1) (value "TestPoint") (footprint "TestPoint:TestPoint_Keystone_5010-5014_Multipurpose")
