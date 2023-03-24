@@ -3536,7 +3536,7 @@
     (property "Value" "PCIE-LP-01-01-F-DV-A-TR" (id 1) (at 38.354 85.09 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Footprint" "Connector_PCBEdge:BUS_PCIexpress_x1" (id 2) (at 51.054 84.836 0)
+    (property "Footprint" "PCIe_x1_card_edge:PCIe_x1_card_edge" (id 2) (at 51.054 84.836 0)
       (effects (font (size 1.27 1.27)) hide)
     )
     (property "Datasheet" "~" (id 3) (at 51.054 84.836 0)
@@ -4093,7 +4093,7 @@
       (reference "J1") (unit 1) (value "Testpoints") (footprint "Connector_PinHeader_2.54mm:PinHeader_1x15_P2.54mm_Vertical")
     )
     (path "/bf762dd7-6b8a-452f-87ce-5c173bdb7a23"
-      (reference "J2") (unit 1) (value "PCIE-LP-01-01-F-DV-A-TR") (footprint "Connector_PCBEdge:BUS_PCIexpress_x1")
+      (reference "J2") (unit 1) (value "PCIE-LP-01-01-F-DV-A-TR") (footprint "PCIe_x1_card_edge:PCIe_x1_card_edge")
     )
     (path "/cb2e9943-b6ad-4768-aa9a-d60fc012410e"
       (reference "J3") (unit 1) (value "DB15_Female") (footprint "DSUB_622-015-260-042:DSUB_622-015-260-042")
