@@ -17,12 +17,13 @@ Remove a lot of CheckDebug() call because commandedState is only updated at 2 lo
 Changed idle to setAllBitsUp() instead of setting each mosfet individually.
 Fixed abort_sequence setBitDown() instead of setBitUp() for the second vent lox if statement.
 Rename pcf to mosfet_pcf.
-Change order of functions to have better grouping.
+Change order of functions to have better grouping and flow.
 Change concat to += for printSensorReading().
+Add if statement to not call mosfet_pcf if it is not found. (caused slowness if mosfet board is not plugged in).
+  Abstract pcf.setLeftBitUp with mosfetCloseValve(mosfet_num).
+Renamed the wifi data send functions to have better flow.
 
 TODO:
-Add if statement to not call mosfet_pcf if it is not found. (caused slowness if mosfet board is not plugged in).
-Simplify debug and wifi_debug.
 Need to ask Liam what should happen in each state and update it in general.
 Check threshold in press(). The variable is used in some comparison, but not other.
 Why is there a while loop in press()? Isn't press() already called in loop()? The point may be to prevent moving to QD before press finish. In this case, we can  just assert that ethComplete and loxComplete is true before changing state.
@@ -142,6 +143,7 @@ Adafruit_MAX31855 thermocouple2(TC_CLK, TC2_CS, TC_DO);
 
 // Initialize mosfets' io expander.
 EasyPCF8575 mosfet_pcf;
+bool mosfet_pcf_found;
 
 //::::::STATE VARIABLES::::::://
 enum STATES {IDLE, ARMED, PRESS, QD, IGNITION, HOTFIRE, ABORT};
@@ -281,12 +283,15 @@ void setup() {
 
   // MOSFET.
   mosfet_pcf.startI2C(21, 22, SEARCH); // Only SEARCH, if using normal pins in Arduino
+  mosfet_pcf_found = false;
   if (!mosfet_pcf.check(SEARCH)) {
     Serial.println("Device not found. Try to specify the address");
     Serial.println(mosfet_pcf.whichAddr());
-    while (true);
+    while (true); // Why do we have this while true?
+  } else {
+    mosfet_pcf_found = true;
   }
-  mosfet_pcf.setAllBitsUp(); // make sure everything is off by default (Up = Off, Down = On)
+  mosfetCloseAllValves(); // make sure everything is off by default (Up = Off, Down = On)
   delay(500); // startup time to make sure its good for personal testing
 
   // Broadcast setup.
@@ -336,9 +341,7 @@ void loop() {
     syncDAQState();
   }
 
-  if (!sendData()) {
-    getReadings();
-  }
+  logData();
 
   sendDelay = GEN_DELAY;
   switch (DAQState) {
@@ -382,21 +385,21 @@ void loop() {
 
 // Everything should be off.
 void idle() {
-  // mosfet_pcf.setLeftBitUp(MOSFET_LOX_MAIN);
-  // mosfet_pcf.setLeftBitUp(MOSFET_ETH_MAIN);
-  // mosfet_pcf.setLeftBitUp(MOSFET_IGNITER);
-  // closeSolenoidOx();
-  // closeSolenoidFuel();
-  // mosfet_pcf.setLeftBitUp(MOSFET_VENT_LOX);
-  // mosfet_pcf.setLeftBitUp(MOSFET_VENT_ETH);
-  mosfet_pcf.setAllBitsUp();
+  // mosfetCloseValve(MOSFET_LOX_MAIN);
+  // mosfetCloseValve(MOSFET_ETH_MAIN);
+  // mosfetCloseValve(MOSFET_IGNITER);
+  // mosfetCloseValve(MOSFET_LOX_PRESS);
+  // mosfetCloseValve(MOSFET_ETH_PRESS);
+  // mosfetCloseValve(MOSFET_VENT_LOX);
+  // mosfetCloseValve(MOSFET_VENT_ETH);
+  mosfetCloseAllValves();
 }
 
 // Oxygen and fuel should not flow yet.
 // This function is the same as idle?
 void armed() {
-  closeSolenoidOx();
-  closeSolenoidFuel();
+  mosfetCloseValve(MOSFET_LOX_PRESS);
+  mosfetCloseValve(MOSFET_ETH_PRESS);
 }
 
 void press() {
@@ -406,26 +409,24 @@ void press() {
 
     while (!oxComplete || !ethComplete) {
       // Serial.print("IN press WHILE LOOP");
-      if (!sendData()) {
-        getReadings();
-      }
+      logData();
 
       if (reading_PT_O1 < pressureOx) { // Should it be pressureOx*threshold?
-        openSolenoidOx();
+        mosfetOpenValve(MOSFET_LOX_PRESS);
         if (DEBUG) {
           reading_PT_O1 += 0.1;
         }
       } else {
-        closeSolenoidOx();
+        mosfetCloseValve(MOSFET_LOX_PRESS);
         oxComplete = true;
       }
       if (reading_PT_E1 < pressureFuel) {
-        openSolenoidFuel();
+        mosfetOpenValve(MOSFET_ETH_PRESS);
         if (DEBUG) {
           reading_PT_E1 += 0.2;
         }
       } else {
-        closeSolenoidFuel();
+        mosfetCloseValve(MOSFET_ETH_PRESS);
         ethComplete = true;
       }
 
@@ -437,57 +438,58 @@ void press() {
 }
 
 void ignition() {
-  mosfet_pcf.setLeftBitDown(MOSFET_IGNITER);
+  mosfetOpenValve(MOSFET_IGNITER);
 }
 
 void hotfire() {
-  mosfet_pcf.setLeftBitDown(MOSFET_LOX_MAIN);
-  mosfet_pcf.setLeftBitDown(MOSFET_ETH_MAIN);
+  mosfetOpenValve(MOSFET_LOX_MAIN);
+  mosfetOpenValve(MOSFET_ETH_MAIN);
 }
 
 // Disconnect harnessings and check state of rocket.
 void quick_disconnect() {
-  closeSolenoidOx();
-  closeSolenoidFuel();
+  mosfetCloseValve(MOSFET_LOX_PRESS);
+  mosfetCloseValve(MOSFET_ETH_PRESS);
   // TODO: QD code here
   CheckAbort();
 }
 
 void abort_sequence() {
-  // mosfet_pcf.setLeftBitDown(MOSFET_VENT_LOX);
-  // mosfet_pcf.setLeftBitDown(MOSFET_VENT_ETH);
+  // mosfetOpenValve(MOSFET_VENT_LOX);
+  // mosfetOpenValve(MOSFET_VENT_ETH);
   // Waits for LOX pressure to decrease before venting Eth through pyro
-  closeSolenoidOx();
-  closeSolenoidFuel();
+  mosfetCloseValve(MOSFET_LOX_PRESS);
+  mosfetCloseValve(MOSFET_ETH_PRESS);
 
   int currtime = millis();
   oxVentComplete = !(reading_PT_O1 > 1.3*ventTo); // 1.3 is magic number.
   ethVentComplete = !(reading_PT_E1 > 1.3*ventTo);
   while(!(oxVentComplete && ethVentComplete)){
     getReadings();
+    printSensorReadings();
     if (reading_PT_O1 > LOXventing) { // vent only lox down to loxventing pressure
-      mosfet_pcf.setLeftBitDown(MOSFET_VENT_LOX);
+      mosfetOpenValve(MOSFET_VENT_LOX);
       if (DEBUG) {
         reading_PT_O1 = reading_PT_O1 - 0.25;
       }
     } else {
       if (reading_PT_E1 > ventTo) {
-        mosfet_pcf.setLeftBitDown(MOSFET_VENT_ETH); // vent ethanol
+        mosfetOpenValve(MOSFET_VENT_ETH); // vent ethanol
         if (DEBUG) {
           reading_PT_E1 = reading_PT_E1 - 0.2;
         }
       } else {
-        mosfet_pcf.setLeftBitUp(MOSFET_VENT_ETH);
+        mosfetCloseValve(MOSFET_VENT_ETH);
         ethVentComplete = true;
       }
 
       if (reading_PT_O1 > ventTo) {
-        mosfet_pcf.setLeftBitDown(MOSFET_VENT_LOX); // vent lox
+        mosfetOpenValve(MOSFET_VENT_LOX); // vent lox
         if (DEBUG) {
           reading_PT_O1 = reading_PT_O1 - 0.1;
         }
       } else { // lox vented to acceptable hold pressure
-        mosfet_pcf.setLeftBitUp(MOSFET_VENT_LOX); // close lox
+        mosfetCloseValve(MOSFET_VENT_LOX); // close lox
         oxVentComplete = true;
       }
     }
@@ -512,41 +514,80 @@ void syncDAQState() {
 
 void CheckAbort() {
   if (COMState == ABORT || reading_PT_O1 >= abortPressure || reading_PT_E1 >= abortPressure) {
-    closeSolenoidFuel();
-    closeSolenoidOx();
+    mosfetCloseValve(MOSFET_ETH_PRESS);
+    mosfetCloseValve(MOSFET_LOX_PRESS);
     DAQState = ABORT;
   }
 }
 
-void closeSolenoidOx(){
-  mosfet_pcf.setLeftBitUp(MOSFET_LOX_PRESS);
+void mosfetCloseAllValves(){
+  if (mosfet_pcf_found) {
+    mosfet_pcf.setAllBitsUp();
+  }
 }
- void closeSolenoidFuel(){
-  mosfet_pcf.setLeftBitUp(MOSFET_ETH_PRESS);
+void mosfetCloseValve(int num){
+  if (mosfet_pcf_found) {
+    mosfet_pcf.setLeftBitUp(num);
+  }
 }
-void openSolenoidFuel(){
-  mosfet_pcf.setLeftBitDown(MOSFET_ETH_PRESS);
-}
-void openSolenoidOx(){
-  mosfet_pcf.setLeftBitDown(MOSFET_LOX_PRESS);
+void openSolenoidFuel(int num){
+  if (mosfet_pcf_found) {
+    mosfet_pcf.setLeftBitDown(num);
+  }
 }
 
 
 //::::::DATA LOGGING AND COMMUNICATION::::::://
-
-bool sendData() {
+void logData() {
+  getReadings();
+  printSensorReadings();
   if (millis()-sendTime > sendDelay) {
     sendTime = millis();
-    addReadingsToQueue();
-    sendQueue();
-    return true;
+    sendData();
+    // saveData();
   }
-  return false;
+}
+
+void getReadings(){
+  if (!DEBUG) {
+    reading_PT_O1 = PT_O1_Slope * scale_PT_O1.read() + PT_O1_Offset;
+    // reading_PT_O2 = PT_O2_Slope * scale_PT_O2.read() + PT_O2_Offset;
+    reading_PT_E1 = PT_E1_Slope * scale_PT_E1.read() + PT_E1_Offset;
+    // reading_PT_E2 = PT_E2_Slope * scale_PT_E2.read() + PT_E2_Offset;
+    reading_PT_C1 = PT_C1_Slope * scale_PT_C1.read() + PT_C1_Offset;
+    reading_LC1   = LC1_Slope   * scale_LC1.read()   + LC1_Offset;
+    reading_LC2   = LC2_Slope   * scale_LC2.read()   + LC2_Offset;
+    reading_LC3   = LC3_Slope   * scale_LC3.read()   + LC3_Offset;
+    // reading_TC1 = thermocouple1.readCelsius();
+    // reading_TC2 = thermocouple2.readCelsius();
+    // readingCap1 = analogRead(CAPSENS1DATA);
+    // readingCap2 = analogRead(CAPSENS2DATA);
+  }
+}
+
+void printSensorReadings() {
+  serialMessage  = millis()         + " ";
+  serialMessage += reading_PT_O1    + " ";
+  serialMessage += reading_PT_O2    + " ";
+  serialMessage += reading_PT_E1    + " ";
+  serialMessage += reading_PT_E2    + " ";
+  serialMessage += reading_PT_C1    + " ";
+  serialMessage += reading_LC1      + " ";
+  serialMessage += reading_LC2      + " ";
+  serialMessage += reading_LC3      + " ";
+  serialMessage += reading_TC1      + " ";
+  serialMessage += reading_TC2      + " ";
+  serialMessage += DAQState         + " ";
+  serialMessage += "Queue Length: " + queueLength;
+  Serial.println(serialMessage);
+}
+
+void sendData() {
+  addReadingsToQueue();
+  sendQueue();
 }
 
 void addReadingsToQueue() {
-  //getReadings();
-
   if (queueLength < 40) {
     queueLength += 1;
     ReadingsQueue[queueLength].messageTime = millis();
@@ -567,64 +608,12 @@ void addReadingsToQueue() {
   }
 }
 
-void getReadings(){
-  if (!DEBUG) {
-    reading_PT_O1 = PT_O1_Slope * scale_PT_O1.read() + PT_O1_Offset;
-    // reading_PT_O2 = PT_O2_Slope * scale_PT_O2.read() + PT_O2_Offset;
-    reading_PT_E1 = PT_E1_Slope * scale_PT_E1.read() + PT_E1_Offset;
-    // reading_PT_E2 = PT_E2_Slope * scale_PT_E2.read() + PT_E2_Offset;
-    reading_PT_C1 = PT_C1_Slope * scale_PT_C1.read() + PT_C1_Offset;
-    reading_LC1   = LC1_Slope   * scale_LC1.read()   + LC1_Offset;
-    reading_LC2   = LC2_Slope   * scale_LC2.read()   + LC2_Offset;
-    reading_LC3   = LC3_Slope   * scale_LC3.read()   + LC3_Offset;
-    // reading_TC1 = thermocouple1.readCelsius();
-    // reading_TC2 = thermocouple2.readCelsius();
-    // readingCap1 = analogRead(CAPSENS1DATA);
-    // readingCap2 = analogRead(CAPSENS2DATA);
-  }
-  printSensorReadings();
-}
-
-void printSensorReadings() {
-  serialMessage  = millis()         + " ";
-  serialMessage += reading_PT_O1    + " ";
-  serialMessage += reading_PT_O2    + " ";
-  serialMessage += reading_PT_E1    + " ";
-  serialMessage += reading_PT_E2    + " ";
-  serialMessage += reading_PT_C1    + " ";
-  serialMessage += reading_LC1      + " ";
-  serialMessage += reading_LC2      + " ";
-  serialMessage += reading_LC3      + " ";
-  serialMessage += reading_TC1      + " ";
-  serialMessage += reading_TC2      + " ";
-  serialMessage += DAQState         + " ";
-  serialMessage += "Queue Length: " + queueLength;
-  Serial.println(serialMessage);
-}
-
 void sendQueue() {
-  if (queueLength > 0) {
-    dataSend();
+  if (queueLength < 0) {
+    return;
   }
-}
-
-void dataSend() {
   // Set values to send
-  Readings.messageTime   = ReadingsQueue[queueLength].messageTime;
-  Readings.pt1           = ReadingsQueue[queueLength].pt1;
-  Readings.pt2           = ReadingsQueue[queueLength].pt2;
-  Readings.pt3           = ReadingsQueue[queueLength].pt3;
-  Readings.pt4           = ReadingsQueue[queueLength].pt4;
-  Readings.pt5           = ReadingsQueue[queueLength].pt5;
-  Readings.lc1           = ReadingsQueue[queueLength].lc1;
-  Readings.lc2           = ReadingsQueue[queueLength].lc2;
-  Readings.lc3           = ReadingsQueue[queueLength].lc3;
-  Readings.tc1           = ReadingsQueue[queueLength].tc1;
-  Readings.tc2           = ReadingsQueue[queueLength].tc2;
-  Readings.DAQState      = ReadingsQueue[queueLength].DAQState;
-  Readings.pressComplete = ReadingsQueue[queueLength].pressComplete;
-  Readings.oxComplete    = ReadingsQueue[queueLength].oxComplete;
-  Readings.ethComplete   = ReadingsQueue[queueLength].ethComplete;
+  Readings = ReadingsQueue[queueLength];
 
   if (!WIFIDEBUG) {
     // Send message via ESP-NOW
