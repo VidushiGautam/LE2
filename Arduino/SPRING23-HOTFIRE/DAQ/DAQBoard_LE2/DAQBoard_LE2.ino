@@ -147,7 +147,7 @@ bool mosfet_pcf_found;
 
 //::::::STATE VARIABLES::::::://
 enum STATES {IDLE, ARMED, PRESS, QD, IGNITION, HOTFIRE, ABORT};
-string state_names[] = {"Idle", "Armed", "Press", "QD", "Ignition", "HOTFIRE", "Abort"};
+String state_names[] = {"Idle", "Armed", "Press", "QD", "Ignition", "HOTFIRE", "Abort"};
 int COMState;
 int DAQState;
 bool ethComplete = false;
@@ -287,7 +287,7 @@ void setup() {
   if (!mosfet_pcf.check(SEARCH)) {
     Serial.println("Device not found. Try to specify the address");
     Serial.println(mosfet_pcf.whichAddr());
-    while (true); // Why do we have this while true?
+    // while (true); // This while (true) stalls the program until an interrupt occurs.
   } else {
     mosfet_pcf_found = true;
   }
@@ -407,7 +407,7 @@ void press() {
     oxComplete = false;
     ethComplete = false;
 
-    while (!oxComplete || !ethComplete) {
+    while (!oxComplete || !ethComplete) { // Why do we need this loop?
       // Serial.print("IN press WHILE LOOP");
       logData();
 
@@ -420,7 +420,7 @@ void press() {
         mosfetCloseValve(MOSFET_LOX_PRESS);
         oxComplete = true;
       }
-      if (reading_PT_E1 < pressureFuel) {
+      if (reading_PT_E1 < pressureFuel) { // Should it be pressureFuel*threshold?
         mosfetOpenValve(MOSFET_ETH_PRESS);
         if (DEBUG) {
           reading_PT_E1 += 0.2;
@@ -530,7 +530,7 @@ void mosfetCloseValve(int num){
     mosfet_pcf.setLeftBitUp(num);
   }
 }
-void openSolenoidFuel(int num){
+void mosfetOpenValve(int num){
   if (mosfet_pcf_found) {
     mosfet_pcf.setLeftBitDown(num);
   }
@@ -566,20 +566,35 @@ void getReadings(){
 }
 
 void printSensorReadings() {
-  serialMessage  = millis()         + " ";
-  serialMessage += reading_PT_O1    + " ";
-  serialMessage += reading_PT_O2    + " ";
-  serialMessage += reading_PT_E1    + " ";
-  serialMessage += reading_PT_E2    + " ";
-  serialMessage += reading_PT_C1    + " ";
-  serialMessage += reading_LC1      + " ";
-  serialMessage += reading_LC2      + " ";
-  serialMessage += reading_LC3      + " ";
-  serialMessage += reading_TC1      + " ";
-  serialMessage += reading_TC2      + " ";
-  serialMessage += DAQState         + " ";
-  serialMessage += "Queue Length: " + queueLength;
-  Serial.println(serialMessage);
+  serialMessage = "";
+  serialMessage.concat(millis());
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_PT_O1);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_PT_O2);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_PT_E1);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_PT_E2);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_PT_C1);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_LC1);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_LC2);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_LC3);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_TC1);
+  serialMessage.concat(" ");
+  serialMessage.concat(reading_TC2);
+  serialMessage.concat(" ");
+  serialMessage.concat(DAQState);
+  //  serialMessage.concat(readingCap1);
+  //  serialMessage.concat(" ");
+  //  serialMessage.concat(readingCap2);
+  serialMessage.concat(" Queue Length: ");
+  serialMessage.concat(queueLength);
 }
 
 void sendData() {
