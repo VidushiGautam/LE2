@@ -18,16 +18,18 @@ Changed idle to setAllBitsUp() instead of setting each mosfet individually.
 Fixed abort_sequence setBitDown() instead of setBitUp() for the second vent lox if statement.
 Rename pcf to mosfet_pcf.
 Change order of functions to have better grouping and flow.
-Change concat to += for printSensorReading().
 Add if statement to not call mosfet_pcf if it is not found. (caused slowness if mosfet board is not plugged in).
   Abstract pcf.setLeftBitUp with mosfetCloseValve(mosfet_num).
+Prevent mosfet's activation if DEBUG is ON. Dangerous if we move to ignite state by accident.
 Renamed the wifi data send functions to have better flow.
+Used Struct to decrease variable declarations of HX711 and MAX31855.
+Changed while loop to if. Move the stop condition to the loop funtion instead.
+Renamed Readings to Packet.
 
 TODO:
 Need to ask Liam what should happen in each state and update it in general.
 Check threshold in press(). The variable is used in some comparison, but not other.
-Why is there a while loop in press()? Isn't press() already called in loop()? The point may be to prevent moving to QD before press finish. In this case, we can  just assert that ethComplete and loxComplete is true before changing state.
-Remove redundant call to pcf.
+Remove redundant/repetitive call to pcf.
 */
 
 //::::::Libraries::::::://
@@ -62,53 +64,45 @@ float sendDelay     = 250;  // Sets frequency of data collection. 1/(sendDelay*1
 
 //::::::DEFINE INSTRUMENT PINOUTS::::::://
 
-// CLK PIN (SHARED ACROSS ALL HX INSTRUMENTS)
-#define CLK 27
+typedef struct struct_hx711 {
+  HX711 scale;
+  float reading;
+  int clk;
+  int gpio;
+  float offset;
+  float slope;
+} struct_hx711;
 
-// LOX System
-#define PT_O1 36 // LOX Tank PT
-float PT_O1_Offset = 1.32;
-float PT_O1_Slope  = 0.0000412;
-// #define PT_O2 39 // LOX Injector PT
-// float PT_O2_Offset = 7.25;
-// float PT_O2_Slope  = 0.000102;
+#define HX_CLK 27
 
-// Eth System
-#define PT_E1 35 // ETH tank PT SWAPPED FROM PINO2
-float PT_E1_Offset = -28.97;
-float PT_E1_Slope  = .0051;
-// #define PT_E2 35 //ETH Injector PT
-// float PT_E2_Offset = 2954;
-// float PT_E2_Slope  = -1.423;
-
-// Combustion Chamber should be 32, swapped atm
-#define PT_C1 32
-float PT_C1_Offset = -4.763;
-float PT_C1_Slope  = 0.0001055;
+// PRESSURE TRANSDUCERS
+struct_hx711 PT_O1 {{}, -1, HX_CLK, 36, 1.32, 0.0000412};
+struct_hx711 PT_O2 {{}, -1, HX_CLK, 39, 7.25, 0.000102};
+struct_hx711 PT_E1 {{}, -1, HX_CLK, 35, -28.97, 0.0051};
+// struct_hx711 PT_E2 {{}, -1, HX_CLK, 35, 2954, -1.423}; // Change GPIO PIN
+struct_hx711 PT_C1 {{}, -1, HX_CLK, 32, -4.763, 0.0001055};
 
 // LOADCELLS
-#define LC1 33
-float LC1_Offset = 10.663;
-float LC1_Slope  = 0.0007518;
-#define LC2 25
-float LC2_Offset = 10.663;
-float LC2_Slope  = 0.0007687;
-#define LC3 26
-float LC3_Offset = 10.663;
-float LC3_Slope  = 0.0007951;
+struct_hx711 LC_1  {{}, -1, HX_CLK, 33, 10.663, 0.0007518};
+struct_hx711 LC_2  {{}, -1, HX_CLK, 25, 10.663, 0.0007687};
+struct_hx711 LC_3  {{}, -1, HX_CLK, 26, 10.663, 0.0007687};
 
 // THERMOCOUPLES
-#define TC_DO    5
-#define TC_DI   17
-#define TC_CLK  18
-#define TC1_CS  16
-#define TC2_CS   4
+typedef struct struct_max31855 {
+  Adafruit_MAX31855 scale;
+  float reading;
+  float cs;
+  float offset;
+  float slope;
+} struct_max31855;
 
-// CAP SENSORS
-// #define CAPSENS1DATA 40
-// #define CAPSENS1CLK  52
-// #define CAPSENS2DATA 13
-// #define CAPSENS2CLK  21
+#define TC_CLK 1 // fix this.
+#define TC_DO  1 // fix this.
+
+struct_max31855 TC_1 {Adafruit_MAX31855(TC_CLK, 16, TC_DO), 16, -1, 0, 0};
+struct_max31855 TC_2 {Adafruit_MAX31855(TC_CLK, 4, TC_DO), 4, -1, 0, 0};
+struct_max31855 TC_3 {Adafruit_MAX31855(TC_CLK, 4, TC_DO), 4, -1, 0, 0};
+struct_max31855 TC_4 {Adafruit_MAX31855(TC_CLK, 4, TC_DO), 4, -1, 0, 0};
 
 // GPIO expander
 #define I2C_SDA 21
@@ -124,30 +118,13 @@ float LC3_Slope  = 0.0007951;
 #define MOSFET_VENT_ETH  6
 #define MOSFET_VENT_LOX  2
 
-
-//::::::DEFINE INSTRUMENTS::::::://
-
-// Initialize the PT and LC sensor objects which use the HX711 breakout board
-HX711 scale_PT_O1;
-// HX711 scale_PT_O2;
-HX711 scale_PT_E1;
-// HX711 scale_PT_E2;
-HX711 scale_PT_C1;
-HX711 scale_LC1;
-HX711 scale_LC2;
-HX711 scale_LC3;
-
-// Initialize thermocouples.
-Adafruit_MAX31855 thermocouple1(TC_CLK, TC1_CS, TC_DO);
-Adafruit_MAX31855 thermocouple2(TC_CLK, TC2_CS, TC_DO);
-
 // Initialize mosfets' io expander.
 EasyPCF8575 mosfet_pcf;
 bool mosfet_pcf_found;
 
 //::::::STATE VARIABLES::::::://
 enum STATES {IDLE, ARMED, PRESS, QD, IGNITION, HOTFIRE, ABORT};
-string state_names[] = {"Idle", "Armed", "Press", "QD", "Ignition", "HOTFIRE", "Abort"};
+String state_names[] = {"Idle", "Armed", "Press", "QD", "Ignition", "HOTFIRE", "Abort"};
 int COMState;
 int DAQState;
 bool ethComplete = false;
@@ -167,50 +144,36 @@ float sendTime;
 short int queueLength = 0;
 
 // Define variables to store readings to be sent
-int debug_state = 0;
-float reading_PT_O1 = 1;
-float reading_PT_O2 = 1;
-float reading_PT_E1 = 1;
-float reading_PT_E2 = 1;
-float reading_PT_C1 = 1;
-float reading_LC1 = 1;
-float reading_LC2 = 1;
-float reading_LC3 = 1;
-float reading_TC1 = 1;
-float reading_TC2 = 1;
-float readingCap1 = 0;
-float readingCap2 = 0;
-short int queueSize = 0;
 
 // Structure example to send data.
 // Must match the receiver structure.
 typedef struct struct_message {
-    int messageTime;
-    float pt1;  // PTO1
-    float pt2;  // PTO2
-    float pt3;  // PTE1
-    float pt4;  // PTE2
-    float pt5;  // PTC1
-    float lc1;
-    float lc2;
-    float lc3;
-    float tc1;
-    float tc2;
-    int COMState;
-    int DAQState;
-    short int queueSize;
-    bool pressComplete;
-    bool ethComplete;
-    bool oxComplete;
-    // bool oxvent;
-    // bool ethVent;
-    // bool VentComplete;
+  int messageTime;
+  float PT_O1;
+  float PT_O2;
+  float PT_E1;
+  float PT_E2;
+  float PT_C1;
+  float LC_1;
+  float LC_2;
+  float LC_3;
+  float TC_1;
+  float TC_2;
+  int COMState;
+  int DAQState;
+  short int queueLength;
+  bool pressComplete;
+  bool ethComplete;
+  bool oxComplete;
+  // bool oxvent;
+  // bool ethVent;
+  // bool VentComplete;
 } struct_message;
 
-// Create a struct_message called Readings to hold sensor readings
-struct_message Readings;
-//create a queue for readings in case
-struct_message ReadingsQueue[120];
+// Create a struct_message called Packet to be sent.
+struct_message Packet;
+// Create a queue for Packet in case Packets are dropped.
+struct_message PacketQueue[120];
 
 // Create a struct_message to hold incoming commands
 struct_message Commands;
@@ -237,9 +200,7 @@ uint8_t broadcastAddress[] = {0xC8, 0xF0, 0x9E, 0x50, 0x23, 0x34};
 // Callback when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&Commands, incomingData, sizeof(Commands));
-  COMState = Commands.COMState;
 }
-
 
 // Initialize all sensors and parameters.
 void setup() {
@@ -249,45 +210,28 @@ void setup() {
   while (!Serial) delay(1); // wait for Serial on Leonardo/Zero, etc.
 
   // HX711.
-  scale_PT_O1.begin(PT_O1, CLK); scale_PT_O1.set_gain(64);
-  // scale_PT_O2.begin(PT_O2, CLK); scale_PT_O2.set_gain(64);
-  scale_PT_E1.begin(PT_E1, CLK); scale_PT_E1.set_gain(64);
-  // scale_PT_E2.begin(PT_E2, CLK); scale_PT_E2.set_gain(64);
-  scale_PT_C1.begin(PT_C1, CLK); scale_PT_C1.set_gain(64);
-  scale_LC1.begin(LC1, CLK); scale_LC1.set_gain(64);
-  scale_LC2.begin(LC2, CLK); scale_LC2.set_gain(64);
-  scale_LC3.begin(LC3, CLK); scale_LC3.set_gain(64);
+  PT_O1.scale.begin(PT_O1.gpio, PT_O1.clk); PT_O1.scale.set_gain(64);
+  // PT_O2.scale.begin(PT_O2.gpio, PT_O2.clk); PT_O2.scale.set_gain(64);
+  PT_E1.scale.begin(PT_E1.gpio, PT_E1.clk);       PT_E1.scale.set_gain(64);
+  // PT_E2.scale.begin(PT_E2.gpio, PT_E2.clk); PT_E2.scale.set_gain(64);
+  PT_C1.scale.begin(PT_C1.gpio, PT_C1.clk); PT_C1.scale.set_gain(64);
+  LC_1.scale.begin(LC_1.gpio, LC_1.clk);    LC_1.scale.set_gain(64);
+  LC_2.scale.begin(LC_2.gpio, LC_2.clk);    LC_2.scale.set_gain(64);
+  LC_3.scale.begin(LC_3.gpio, LC_3.clk);    LC_3.scale.set_gain(64);
 
   // Thermocouple.
-  pinMode(TC1_CS, INPUT);
-  pinMode(TC2_CS, INPUT);
-
-  // Serial.println("MAX31855 test");
-  // // wait for MAX chip to stabilize
-  // delay(500);
-  // Serial.print("Initializing sensor...");
-  // if (!thermocouple.begin()) {
-  //   Serial.println("ERROR.");
-  //   while (1) delay(10);
-  // }
-
-  // OPTIONAL: Can configure fault checks as desired (default is ALL)
-  // Multiple checks can be logically OR'd together.
-  // thermocouple.setFaultChecks(MAX31855_FAULT_OPEN | MAX31855_FAULT_SHORT_VCC);  // short to GND fault is ignored
-
-  // Cap Sensor.
-  // pinMode(CAPSENS1DATA, INPUT);
-  // pinMode(CAPSENS1CLK, OUTPUT);
-  // pinMode(CAPSENS2DATA, INPUT);
-  // pinMode(CAPSENS2CLK, OUTPUT);
+  pinMode(TC_1.cs, INPUT);
+  pinMode(TC_2.cs, INPUT);
+  pinMode(TC_3.cs, INPUT);
+  pinMode(TC_4.cs, INPUT);
 
   // MOSFET.
-  mosfet_pcf.startI2C(21, 22, SEARCH); // Only SEARCH, if using normal pins in Arduino
+  mosfet_pcf.startI2C(I2C_SDA, I2C_SCL, SEARCH); // Only SEARCH, if using normal pins in Arduino
   mosfet_pcf_found = false;
   if (!mosfet_pcf.check(SEARCH)) {
     Serial.println("Device not found. Try to specify the address");
     Serial.println(mosfet_pcf.whichAddr());
-    while (true); // Why do we have this while true?
+    // while (true); // This while (true) stalls the program until an interrupt occurs.
   } else {
     mosfet_pcf_found = true;
   }
@@ -337,7 +281,7 @@ void loop() {
   if (DEBUG) {
     Serial.print(state_names[DAQState]);
   }
-  if (DEBUG || COMState == IDLE || COMState == ABORT) {
+  if (DEBUG || COMState == ABORT) {
     syncDAQState();
   }
 
@@ -352,12 +296,12 @@ void loop() {
       break;
 
     case (ARMED): // NEED TO ADD TO CASE OPTIONS //ALLOWS OTHER CASES TO TRIGGER //INITIATE TANK PRESS LIVE READINGS
-      if (COMState == PRESS) { syncDAQState(); }
+      if (COMState == IDLE || COMState == PRESS) { syncDAQState(); }
       armed();
       break;
 
     case (PRESS):
-      if (COMState == QD/* || COMState == IGNITION*/) { syncDAQState(); } // Does press go directly to ignition?
+      if (COMState == QD && oxComplete && ethComplete) { syncDAQState(); }
       press();
       break;
 
@@ -376,6 +320,7 @@ void loop() {
       break;
 
     case (ABORT):
+      if (COMState == IDLE && oxVentComplete && ethVentComplete) { syncDAQState(); }
       abort_sequence();
       break;
   }
@@ -384,6 +329,14 @@ void loop() {
 // State Functions.
 
 // Everything should be off.
+void reset() {
+  oxComplete = false;
+  ethComplete = false;
+  pressComplete = false;
+  oxVentComplete = false;
+  ethVentComplete = false;
+}
+
 void idle() {
   // mosfetCloseValve(MOSFET_LOX_MAIN);
   // mosfetCloseValve(MOSFET_ETH_MAIN);
@@ -393,45 +346,38 @@ void idle() {
   // mosfetCloseValve(MOSFET_VENT_LOX);
   // mosfetCloseValve(MOSFET_VENT_ETH);
   mosfetCloseAllValves();
+  reset(); // must set oxComplete and ethComplete to false!
 }
 
 // Oxygen and fuel should not flow yet.
 // This function is the same as idle?
 void armed() {
-  mosfetCloseValve(MOSFET_LOX_PRESS);
-  mosfetCloseValve(MOSFET_ETH_PRESS);
+  // mosfetCloseValve(MOSFET_LOX_PRESS);
+  // mosfetCloseValve(MOSFET_ETH_PRESS);
+  mosfetCloseAllValves();
 }
 
 void press() {
-  if (reading_PT_O1 < pressureOx*threshold || reading_PT_E1 < pressureFuel*threshold) {
-    oxComplete = false;
-    ethComplete = false;
-
-    while (!oxComplete || !ethComplete) {
-      // Serial.print("IN press WHILE LOOP");
-      logData();
-
-      if (reading_PT_O1 < pressureOx) { // Should it be pressureOx*threshold?
+  if (PT_O1.reading < pressureOx*threshold || PT_E1.reading < pressureFuel*threshold) {
+    if (!(oxComplete && ethComplete)) {
+      if (PT_O1.reading < pressureOx) { // Should it be pressureOx*threshold?
         mosfetOpenValve(MOSFET_LOX_PRESS);
         if (DEBUG) {
-          reading_PT_O1 += 0.1;
+          PT_O1.reading += 0.1;
         }
       } else {
         mosfetCloseValve(MOSFET_LOX_PRESS);
         oxComplete = true;
       }
-      if (reading_PT_E1 < pressureFuel) {
+      if (PT_E1.reading < pressureFuel) { // Should it be pressureFuel*threshold?
         mosfetOpenValve(MOSFET_ETH_PRESS);
         if (DEBUG) {
-          reading_PT_E1 += 0.2;
+          PT_E1.reading += 0.2;
         }
       } else {
         mosfetCloseValve(MOSFET_ETH_PRESS);
         ethComplete = true;
       }
-
-      // ABORT CASES
-      CheckAbort();
     }
   }
   CheckAbort();
@@ -462,31 +408,29 @@ void abort_sequence() {
   mosfetCloseValve(MOSFET_ETH_PRESS);
 
   int currtime = millis();
-  oxVentComplete = !(reading_PT_O1 > 1.3*ventTo); // 1.3 is magic number.
-  ethVentComplete = !(reading_PT_E1 > 1.3*ventTo);
-  while(!(oxVentComplete && ethVentComplete)){
-    getReadings();
-    printSensorReadings();
-    if (reading_PT_O1 > LOXventing) { // vent only lox down to loxventing pressure
+  oxVentComplete = !(PT_O1.reading > 1.3*ventTo); // 1.3 is magic number.
+  ethVentComplete = !(PT_E1.reading > 1.3*ventTo);
+  if(!(oxVentComplete && ethVentComplete)){
+    if (PT_O1.reading > LOXventing) { // vent only lox down to loxventing pressure
       mosfetOpenValve(MOSFET_VENT_LOX);
       if (DEBUG) {
-        reading_PT_O1 = reading_PT_O1 - 0.25;
+        PT_O1.reading = PT_O1.reading - 0.25;
       }
     } else {
-      if (reading_PT_E1 > ventTo) {
+      if (PT_E1.reading > ventTo) {
         mosfetOpenValve(MOSFET_VENT_ETH); // vent ethanol
         if (DEBUG) {
-          reading_PT_E1 = reading_PT_E1 - 0.2;
+          PT_E1.reading = PT_E1.reading - 0.2;
         }
       } else {
         mosfetCloseValve(MOSFET_VENT_ETH);
         ethVentComplete = true;
       }
 
-      if (reading_PT_O1 > ventTo) {
+      if (PT_O1.reading > ventTo) {
         mosfetOpenValve(MOSFET_VENT_LOX); // vent lox
         if (DEBUG) {
-          reading_PT_O1 = reading_PT_O1 - 0.1;
+          PT_O1.reading = PT_O1.reading - 0.1;
         }
       } else { // lox vented to acceptable hold pressure
         mosfetCloseValve(MOSFET_VENT_LOX); // close lox
@@ -500,10 +444,11 @@ void abort_sequence() {
 
 // Get commanded state from COM board.
 void fetchCOMState() {
+  COMState = Commands.COMState;
   if (Serial.available() > 0) {
     COMState = Serial.read() - 48;
     delay(50);
-    Serial.println(COMState);
+    // Serial.println(COMState);
   }
 }
 
@@ -513,7 +458,7 @@ void syncDAQState() {
 }
 
 void CheckAbort() {
-  if (COMState == ABORT || reading_PT_O1 >= abortPressure || reading_PT_E1 >= abortPressure) {
+  if (COMState == ABORT || PT_O1.reading >= abortPressure || PT_E1.reading >= abortPressure) {
     mosfetCloseValve(MOSFET_ETH_PRESS);
     mosfetCloseValve(MOSFET_LOX_PRESS);
     DAQState = ABORT;
@@ -521,17 +466,18 @@ void CheckAbort() {
 }
 
 void mosfetCloseAllValves(){
-  if (mosfet_pcf_found) {
+  if (mosfet_pcf_found && !DEBUG) {
     mosfet_pcf.setAllBitsUp();
   }
 }
 void mosfetCloseValve(int num){
-  if (mosfet_pcf_found) {
+  // It takes power to keep valves closed. Hence, bit is set HIGH.
+  if (mosfet_pcf_found && !DEBUG) {
     mosfet_pcf.setLeftBitUp(num);
   }
 }
-void openSolenoidFuel(int num){
-  if (mosfet_pcf_found) {
+void mosfetOpenValve(int num){
+  if (mosfet_pcf_found && !DEBUG) {
     mosfet_pcf.setLeftBitDown(num);
   }
 }
@@ -550,61 +496,75 @@ void logData() {
 
 void getReadings(){
   if (!DEBUG) {
-    reading_PT_O1 = PT_O1_Slope * scale_PT_O1.read() + PT_O1_Offset;
-    // reading_PT_O2 = PT_O2_Slope * scale_PT_O2.read() + PT_O2_Offset;
-    reading_PT_E1 = PT_E1_Slope * scale_PT_E1.read() + PT_E1_Offset;
-    // reading_PT_E2 = PT_E2_Slope * scale_PT_E2.read() + PT_E2_Offset;
-    reading_PT_C1 = PT_C1_Slope * scale_PT_C1.read() + PT_C1_Offset;
-    reading_LC1   = LC1_Slope   * scale_LC1.read()   + LC1_Offset;
-    reading_LC2   = LC2_Slope   * scale_LC2.read()   + LC2_Offset;
-    reading_LC3   = LC3_Slope   * scale_LC3.read()   + LC3_Offset;
-    // reading_TC1 = thermocouple1.readCelsius();
-    // reading_TC2 = thermocouple2.readCelsius();
-    // readingCap1 = analogRead(CAPSENS1DATA);
-    // readingCap2 = analogRead(CAPSENS2DATA);
+    PT_O1.reading = PT_O1.slope * PT_O1.scale.read() + PT_O1.offset;
+    // rPT_O2.reading = PT_O2.slope * PT_O2.scale.read() + PT_O2.offset;
+    PT_E1.reading = PT_E1.slope * PT_E1.scale.read() + PT_E1.offset;
+    // PT_E2.reading = PT_E2.slope * PT_E2.scale.read() + PT_E2.offset;
+    PT_C1.reading = PT_C1.slope * PT_C1.scale.read() + PT_C1.offset;
+    LC_1.reading  = LC_1.slope  * LC_1.scale.read()  + LC_1.offset;
+    LC_2.reading  = LC_2.slope  * LC_2.scale.read()  + LC_2.offset;
+    LC_3.reading  = LC_3.slope  * LC_3.scale.read()  + LC_3.offset;
+    // TC_1.reading = TC_1.scale.readCelsius();
+    // TC_2.reading = TC_2.scale.readCelsius();
   }
 }
 
 void printSensorReadings() {
-  serialMessage  = millis()         + " ";
-  serialMessage += reading_PT_O1    + " ";
-  serialMessage += reading_PT_O2    + " ";
-  serialMessage += reading_PT_E1    + " ";
-  serialMessage += reading_PT_E2    + " ";
-  serialMessage += reading_PT_C1    + " ";
-  serialMessage += reading_LC1      + " ";
-  serialMessage += reading_LC2      + " ";
-  serialMessage += reading_LC3      + " ";
-  serialMessage += reading_TC1      + " ";
-  serialMessage += reading_TC2      + " ";
-  serialMessage += DAQState         + " ";
-  serialMessage += "Queue Length: " + queueLength;
-  Serial.println(serialMessage);
+  serialMessage = "";
+  serialMessage.concat(millis());
+  serialMessage.concat(" ");
+  serialMessage.concat(PT_O1.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(PT_O2.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(PT_E1.reading);
+  serialMessage.concat(" ");
+  // serialMessage.concat(PT_E2.reading);
+  // serialMessage.concat(" ");
+  serialMessage.concat(PT_C1.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(LC_1.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(LC_2.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(LC_3.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(TC_1.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(TC_2.reading);
+  serialMessage.concat(" ");
+  serialMessage.concat(DAQState);
+  //  serialMessage.concat(readingCap1);
+  //  serialMessage.concat(" ");
+  //  serialMessage.concat(readingCap2);
+  serialMessage.concat(" Queue Length: ");
+  serialMessage.concat(queueLength);
 }
 
+// Send data to COM board.
 void sendData() {
-  addReadingsToQueue();
+  addPacketToQueue();
   sendQueue();
 }
 
-void addReadingsToQueue() {
+void addPacketToQueue() {
   if (queueLength < 40) {
     queueLength += 1;
-    ReadingsQueue[queueLength].messageTime = millis();
-    ReadingsQueue[queueLength].pt1         = reading_PT_O1;
-    ReadingsQueue[queueLength].pt2         = reading_PT_O2;
-    ReadingsQueue[queueLength].pt3         = reading_PT_E1;
-    ReadingsQueue[queueLength].pt4         = reading_PT_E2;
-    ReadingsQueue[queueLength].pt5         = reading_PT_C1;
-    ReadingsQueue[queueLength].lc1         = reading_LC1;
-    ReadingsQueue[queueLength].lc2         = reading_LC2;
-    ReadingsQueue[queueLength].lc3         = reading_LC3;
-    ReadingsQueue[queueLength].tc1         = reading_TC1;
-    ReadingsQueue[queueLength].tc2         = reading_TC2;
-    ReadingsQueue[queueLength].queueSize   = queueLength;
-    ReadingsQueue[queueLength].DAQState    = DAQState;
-    ReadingsQueue[queueLength].oxComplete  = oxComplete;
-    ReadingsQueue[queueLength].ethComplete = ethComplete;
+    PacketQueue[queueLength].messageTime = millis();
+    PacketQueue[queueLength].PT_O1       = PT_O1.reading;
+    PacketQueue[queueLength].PT_O2       = PT_O2.reading;
+    PacketQueue[queueLength].PT_E1       = PT_E1.reading;
+    // PacketQueue[queueLength].PT_E2       = PT_E2.reading;
+    PacketQueue[queueLength].PT_C1       = PT_C1.reading;
+    PacketQueue[queueLength].LC_1        = LC_1.reading;
+    PacketQueue[queueLength].LC_2        = LC_2.reading;
+    PacketQueue[queueLength].LC_3        = LC_3.reading;
+    PacketQueue[queueLength].TC_1        = TC_1.reading;
+    PacketQueue[queueLength].TC_2        = TC_2.reading;
+    PacketQueue[queueLength].queueLength = queueLength;
+    PacketQueue[queueLength].DAQState    = DAQState;
+    PacketQueue[queueLength].oxComplete  = oxComplete;
+    PacketQueue[queueLength].ethComplete = ethComplete;
   }
 }
 
@@ -613,15 +573,14 @@ void sendQueue() {
     return;
   }
   // Set values to send
-  Readings = ReadingsQueue[queueLength];
+  Packet = PacketQueue[queueLength];
 
   if (!WIFIDEBUG) {
     // Send message via ESP-NOW
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &Readings, sizeof(Readings));
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &Packet, sizeof(Packet));
 
     if (result == ESP_OK) {
       Serial.println("Sent with success Data Send");
-      // ReadingsQueue[queueLength].pt1val = 0;
       queueLength -= 1;
     } else {
       Serial.println("Error sending the data");
