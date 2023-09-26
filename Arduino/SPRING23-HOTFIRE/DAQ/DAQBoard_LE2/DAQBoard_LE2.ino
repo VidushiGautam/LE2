@@ -360,7 +360,7 @@ void armed() {
 void press() {
   if (PT_O1.reading < pressureOx*threshold || PT_E1.reading < pressureFuel*threshold) {
     if (!(oxComplete && ethComplete)) {
-      if (PT_O1.reading < pressureOx) { // Should it be pressureOx*threshold?
+      if (PT_O1.reading < pressureOx*threshold) { // Should it be pressureOx*threshold?
         mosfetOpenValve(MOSFET_LOX_PRESS);
         if (DEBUG) {
           PT_O1.reading += 0.1;
@@ -369,7 +369,7 @@ void press() {
         mosfetCloseValve(MOSFET_LOX_PRESS);
         oxComplete = true;
       }
-      if (PT_E1.reading < pressureFuel) { // Should it be pressureFuel*threshold?
+      if (PT_E1.reading < pressureFuel*threshold) { // Should it be pressureFuel*threshold?
         mosfetOpenValve(MOSFET_ETH_PRESS);
         if (DEBUG) {
           PT_E1.reading += 0.2;
@@ -477,7 +477,11 @@ void mosfetCloseValve(int num){
   }
 }
 void mosfetOpenValve(int num){
+<<<<<<< HEAD
   if (mosfet_pcf_found && !DEBUG) {
+=======
+  if (mosfet_pcf_found) {
+>>>>>>> 5354782da4d04650f026d75b3807187ee65d3d25
     mosfet_pcf.setLeftBitDown(num);
   }
 }
