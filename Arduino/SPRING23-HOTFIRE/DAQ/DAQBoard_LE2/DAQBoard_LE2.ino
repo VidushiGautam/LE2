@@ -117,6 +117,10 @@ struct_max31855 TC_4 {Adafruit_MAX31855(TC_CLK, 4, TC_DO), 4, -1, 0, 0};
 #define MOSFET_LOX_PRESS 5
 #define MOSFET_VENT_ETH  6
 #define MOSFET_VENT_LOX  2
+#define MOSFET_P_VENT_LOX 11
+#define MOSFET_P_VENT_ETH 12
+#define MOSFET_QD_LOX 13
+#define MOSFET_QD_ETH 14
 
 // Initialize mosfets' io expander.
 EasyPCF8575 mosfet_pcf;
@@ -396,7 +400,17 @@ void hotfire() {
 void quick_disconnect() {
   mosfetCloseValve(MOSFET_LOX_PRESS);
   mosfetCloseValve(MOSFET_ETH_PRESS);
-  // TODO: QD code here
+  // vent valves/vent the lines themselves
+  mosfetOpenValve(MOSFET_P_VENT_LOX);
+  mosfetOpenValve(MOSFET_P_VENT_ETH);
+  int VentStartTime = millis();
+  while (millis()-VentStartTime < 1000){}
+  mosfetCloseValve(MOSFET_P_VENT_LOX);
+  mosfetCloseValve(MOSFET_P_VENT_ETH);
+  // then, disconnect the lines from the rocket
+  mosfetOpenValve(MOSFET_QD_LOX);
+  mosfetOpenValve(MOSFET_QD_ETH);
+
   CheckAbort();
 }
 
@@ -477,11 +491,7 @@ void mosfetCloseValve(int num){
   }
 }
 void mosfetOpenValve(int num){
-<<<<<<< HEAD
   if (mosfet_pcf_found && !DEBUG) {
-=======
-  if (mosfet_pcf_found) {
->>>>>>> 5354782da4d04650f026d75b3807187ee65d3d25
     mosfet_pcf.setLeftBitDown(num);
   }
 }
