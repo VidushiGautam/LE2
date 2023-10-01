@@ -136,6 +136,7 @@ bool oxComplete = false;
 bool pressComplete = false ;
 bool oxVentComplete = false;
 bool ethVentComplete = false;
+int ignStart;
 
 // Delay between loops.
 #define IDLE_DELAY 250
@@ -239,7 +240,7 @@ void setup() {
   } else {
     mosfet_pcf_found = true;
   }
-  mosfetCloseAllValves(); // make sure everything is off by default (Up = Off, Down = On)
+  mosfetCloseAllValves(); // make sure everything is off by default (NMOS: Down = Off, Up = On)
   delay(500); // startup time to make sure its good for personal testing
 
   // Broadcast setup.
@@ -305,8 +306,8 @@ void loop() {
       break;
 
     case (PRESS):
-      if (COMState == QD && oxComplete && ethComplete) { 
-        syncDAQState(); 
+      if (COMState == QD && oxComplete && ethComplete) {
+        syncDAQState();
         int pressStart = millis();
       }
       press();
@@ -318,9 +319,9 @@ void loop() {
       break;
 
     case (IGNITION):
-      if (COMState == HOTFIRE) { 
-        syncDAQState(); 
-        int ignStart = millis();
+      if (COMState == HOTFIRE) {
+        syncDAQState();
+        ignStart = millis();
         }
       ignition();
       break;
@@ -398,10 +399,12 @@ void ignition() {
 }
 
 void hotfire() {
-  mosfetOpenValve(MOSFET_LOX_MAIN);
   mosfetOpenValve(MOSFET_ETH_MAIN);
-  if millis() >= (ignStart+3000) {
-    mosfetCloseValve(MOSFET_LOX_MAIN)}
+  if (millis() >= ignStart+3000) {
+    mosfetCloseValve(MOSFET_LOX_MAIN);
+  } else {
+    mosfetOpenValve(MOSFET_LOX_MAIN);
+  }
 }
 
 // Disconnect harnessings and check state of rocket.
@@ -418,8 +421,8 @@ void quick_disconnect() {
   // then, disconnect the lines from the rocket itself
     //mosfetOpenValve(MOSFET_QD_LOX);
     //mosfetOpenValve(MOSFET_QD_ETH);
-  }
-  
+  // }
+
   CheckAbort();
 }
 
@@ -490,18 +493,18 @@ void CheckAbort() {
 
 void mosfetCloseAllValves(){
   if (mosfet_pcf_found && !DEBUG) {
-    mosfet_pcf.setAllBitsUp();
+    mosfet_pcf.setAllBitsDown();
   }
 }
 void mosfetCloseValve(int num){
   // It takes power to keep valves closed. Hence, bit is set HIGH.
   if (mosfet_pcf_found && !DEBUG) {
-    mosfet_pcf.setLeftBitUp(num);
+    mosfet_pcf.setLeftBitDown(num);
   }
 }
 void mosfetOpenValve(int num){
   if (mosfet_pcf_found && !DEBUG) {
-    mosfet_pcf.setLeftBitDown(num);
+    mosfet_pcf.setLeftBitUp(num);
   }
 }
 
