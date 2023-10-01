@@ -109,18 +109,18 @@ struct_max31855 TC_4 {Adafruit_MAX31855(TC_CLK, 4, TC_DO), 4, -1, 0, 0};
 #define I2C_SCL 22
 
 // MOSFETS
-#define MOSFET_IGNITER   0
-#define MOSFET_ETH_MAIN  1
-#define MOSFET_EXTRA    10
+#define MOSFET_IGNITER  11
+#define MOSFET_ETH_MAIN  10
+#define MOSFET_EXTRA    14
 #define MOSFET_LOX_MAIN  3
 #define MOSFET_ETH_PRESS 4
 #define MOSFET_LOX_PRESS 5
 #define MOSFET_VENT_ETH  6
-#define MOSFET_VENT_LOX  2
-#define MOSFET_P_VENT_LOX 11
-#define MOSFET_P_VENT_ETH 12
-#define MOSFET_QD_LOX 13
-#define MOSFET_QD_ETH 14
+#define MOSFET_VENT_LOX  7
+//#define MOSFET_P_VENT_LOX //NEED PIN
+//#define MOSFET_P_VENT_ETH //NEED PIN
+#define MOSFET_QD_LOX 12
+#define MOSFET_QD_ETH 13
 
 // Initialize mosfets' io expander.
 EasyPCF8575 mosfet_pcf;
@@ -305,7 +305,10 @@ void loop() {
       break;
 
     case (PRESS):
-      if (COMState == QD && oxComplete && ethComplete) { syncDAQState(); }
+      if (COMState == QD && oxComplete && ethComplete) { 
+        syncDAQState(); 
+        int pressStart = millis();
+      }
       press();
       break;
 
@@ -315,7 +318,10 @@ void loop() {
       break;
 
     case (IGNITION):
-      if (COMState == HOTFIRE) { syncDAQState(); }
+      if (COMState == HOTFIRE) { 
+        syncDAQState(); 
+        int ignStart = millis();
+        }
       ignition();
       break;
 
@@ -394,6 +400,8 @@ void ignition() {
 void hotfire() {
   mosfetOpenValve(MOSFET_LOX_MAIN);
   mosfetOpenValve(MOSFET_ETH_MAIN);
+  if millis() >= (ignStart+3000) {
+    mosfetCloseValve(MOSFET_LOX_MAIN)}
 }
 
 // Disconnect harnessings and check state of rocket.
@@ -401,16 +409,17 @@ void quick_disconnect() {
   mosfetCloseValve(MOSFET_LOX_PRESS);
   mosfetCloseValve(MOSFET_ETH_PRESS);
   // vent valves/vent the lines themselves
-  mosfetOpenValve(MOSFET_P_VENT_LOX);
-  mosfetOpenValve(MOSFET_P_VENT_ETH);
-  int VentStartTime = millis();
-  while (millis()-VentStartTime < 1000){}
-  mosfetCloseValve(MOSFET_P_VENT_LOX);
-  mosfetCloseValve(MOSFET_P_VENT_ETH);
-  // then, disconnect the lines from the rocket
-  mosfetOpenValve(MOSFET_QD_LOX);
-  mosfetOpenValve(MOSFET_QD_ETH);
-
+  //mosfetOpenValve(MOSFET_P_VENT_LOX);
+  //mosfetOpenValve(MOSFET_P_VENT_ETH);
+  // vent the pressure solenoid for 1 full second
+  //if millis() >= (pressStart+1000){
+   // mosfetCloseValve(MOSFET_P_VENT_LOX);
+   // mosfetCloseValve(MOSFET_P_VENT_ETH);
+  // then, disconnect the lines from the rocket itself
+    //mosfetOpenValve(MOSFET_QD_LOX);
+    //mosfetOpenValve(MOSFET_QD_ETH);
+  }
+  
   CheckAbort();
 }
 
